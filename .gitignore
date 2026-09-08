@@ -6,3 +6,6 @@ config.json
 *.db-wal
 *.db-shm
 *.log
+
+# Настройки IDE — машинно-зависимые
+.idea/
