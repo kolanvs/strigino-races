@@ -1,0 +1,18 @@
+{
+    "telegram_token": "123456789:AAExampleTokenFromBotFather",
+    "allowed_chat_ids": [],
+
+    "poll_interval_minutes": 5,
+    "include_tomorrow": true,
+
+    "min_delay_minutes": 1,
+    "departed_min_delay_minutes": 15,
+    "include_flight_number": true,
+    "show_total_delay": true,
+    "notify_cancelled": true,
+
+    "database": "strigino.db",
+    "keep_days": 14,
+    "log_level": "INFO",
+    "log_file": ""
+}

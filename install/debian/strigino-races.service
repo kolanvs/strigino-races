@@ -1,0 +1,40 @@
+[Unit]
+Description=Мониторинг задержек вылетов аэропорта Стригино (GOJ)
+Documentation=https://ar-goj.ru/board/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=strigino
+Group=strigino
+WorkingDirectory=/opt/strigino-races
+ExecStart=/usr/bin/python3 -m strigino --config /etc/strigino-races/config.json run
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=strigino-races
+
+# База и логи — единственное, что нужно писать.
+StateDirectory=strigino-races
+ReadWritePaths=/var/lib/strigino-races
+
+# Ограничения: сервису нужен только исходящий HTTPS.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
