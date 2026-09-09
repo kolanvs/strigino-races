@@ -61,8 +61,7 @@ class BotHandler:
 
         if command in ("/start", "/subscribe"):
             self.db.add_chat(chat_id, title)
-            return chat_id, ("Подписка оформлена. Оповещения о задержках вылетов "
-                             "из Стригино будут приходить сюда.\n\n" + notify.HELP_TEXT)
+            return chat_id, notify.SUBSCRIBED_TEXT
 
         if command in ("/stop", "/unsubscribe"):
             self.db.deactivate_chat(chat_id)

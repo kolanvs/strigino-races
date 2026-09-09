@@ -60,11 +60,17 @@ class Application:
                 sent += 1
             except TelegramError as exc:
                 self.db.mark_failed(message["id"], exc)
-                if exc.fatal:
-                    # Бот заблокирован или чат удалён — больше туда не пишем.
+                if exc.chat_gone:
+                    # Бота заблокировали или чат удалён — больше туда не пишем.
                     log.warning("чат %s недоступен (%s), отключаю",
                                 message["chat_id"], exc)
                     self.db.deactivate_chat(message["chat_id"])
+                elif exc.fatal:
+                    # Само сообщение не примут и при повторе — бросаем его,
+                    # чтобы не блокировало очередь, но чат оставляем.
+                    log.error("сообщение %s отклонено, пропускаю: %s",
+                              message["id"], exc)
+                    self.db.give_up(message["id"], exc)
                 else:
                     log.error("отправка не удалась: %s", exc)
                     break  # сеть недоступна — попробуем в следующий раз

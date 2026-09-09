@@ -239,6 +239,17 @@ class Database:
             self.conn.execute("UPDATE messages SET sent_utc = ?, last_error = NULL"
                               " WHERE id = ?", (iso(now_utc()), message_id))
 
+    def give_up(self, message_id, error):
+        """Отказаться от сообщения, которое Telegram не примет и при повторе.
+
+        Такое сообщение нельзя оставлять в очереди: оно будет бесконечно
+        всплывать первым и задерживать всё, что за ним.
+        """
+        with self.lock:
+            self.conn.execute(
+                "UPDATE messages SET attempts = 9999, last_error = ?"
+                " WHERE id = ?", (str(error)[:500], message_id))
+
     def mark_failed(self, message_id, error):
         with self.lock:
             self.conn.execute(

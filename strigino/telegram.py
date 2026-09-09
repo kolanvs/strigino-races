@@ -18,13 +18,25 @@ API_URL = "https://api.telegram.org/bot%s/%s"
 
 
 class TelegramError(Exception):
-    """Ошибка обращения к Bot API."""
+    """Ошибка обращения к Bot API.
 
-    def __init__(self, message, code=None, retry_after=None, fatal=False):
+    Различаются три исхода, потому что реакция на них разная:
+
+    * ``chat_gone`` — чат недоступен навсегда (бота заблокировали, чат
+      удалили): подписку надо отключить;
+    * ``fatal`` — это конкретное сообщение не примут и при повторе
+      (например, испорченная HTML-разметка): его надо бросить, но чат
+      трогать нельзя;
+    * остальное — временное (сеть, 5xx, 429): повторить позже.
+    """
+
+    def __init__(self, message, code=None, retry_after=None,
+                 fatal=False, chat_gone=False):
         super().__init__(message)
         self.code = code
         self.retry_after = retry_after
-        self.fatal = fatal
+        self.fatal = fatal or chat_gone
+        self.chat_gone = chat_gone
 
 
 class TelegramClient:
@@ -52,11 +64,18 @@ class TelegramClient:
                 raise TelegramError("HTTP %s: %s" % (exc.code, body[:200]), code=exc.code)
             description = payload.get("description", body[:200])
             retry_after = (payload.get("parameters") or {}).get("retry_after")
-            # 400/403 — сообщение не примут и при повторе (чат удалён, бот
-            # заблокирован), поэтому такие ошибки помечаем фатальными.
-            fatal = exc.code in (400, 403)
+            lowered = description.lower()
+            # 403 — бота заблокировали или выгнали из чата. Среди 400 чат
+            # недоступен только по конкретным формулировкам; все прочие 400
+            # (чаще всего испорченная разметка) относятся к сообщению, и
+            # отписывать из-за них чат нельзя.
+            chat_gone = exc.code == 403 or any(
+                marker in lowered for marker in
+                ("chat not found", "chat_id is empty", "user is deactivated",
+                 "bot was kicked", "group chat was upgraded"))
             raise TelegramError(description, code=exc.code,
-                                retry_after=retry_after, fatal=fatal)
+                                retry_after=retry_after,
+                                fatal=exc.code == 400, chat_gone=chat_gone)
         except (urllib.error.URLError, OSError, ssl.SSLError, ValueError) as exc:
             raise TelegramError(str(exc))
 
@@ -67,13 +86,17 @@ class TelegramClient:
     def get_me(self):
         return self._call("getMe")
 
-    def send_message(self, chat_id, text, disable_notification=False):
-        return self._call("sendMessage", {
+    def send_message(self, chat_id, text, disable_notification=False,
+                     parse_mode="HTML"):
+        params = {
             "chat_id": chat_id,
             "text": text,
             "disable_web_page_preview": "true",
             "disable_notification": "true" if disable_notification else "false",
-        })
+        }
+        if parse_mode:
+            params["parse_mode"] = parse_mode
+        return self._call("sendMessage", params)
 
     def get_updates(self, offset=None, timeout=25):
         """Long polling. Сетевой таймаут берётся с запасом над серверным."""

@@ -90,11 +90,14 @@ class TestDelayScenario(MonitorTestCase):
         self.assertEqual(len(messages), 1)
         self.assertEqual(
             messages[0],
-            "Задержан рейс ZF-443 Нижний Новгород-Анталья (GOJ-AYT), "
-            "заявленное время вылета - 9 сентября 20:50, "
-            "новое время вылета - 9 сентября 22:05, "
-            "время обнаружения задержки - 9 сентября 21:02."
-            "\nОбщая задержка: 1 ч 15 мин.")
+            "⚠️ <b>Задержан рейс ZF-443</b>\n"
+            "Нижний Новгород → Анталья · <code>GOJ-AYT</code>\n"
+            "\n"
+            "По расписанию: <b>9 сентября 20:50</b>\n"
+            "Новое время: <b>22:05</b>\n"
+            "Задержка: <b>1 ч 15 мин</b>\n"
+            "\n"
+            "<i>Обнаружено 21:02</i>")
 
         # 21:15 — ничего не изменилось, повторов быть не должно.
         self.poll_at(SEPT(9, 21, 15), [make_row(self.SCHEDULED, SEPT(9, 22, 5))])
@@ -109,13 +112,18 @@ class TestDelayScenario(MonitorTestCase):
         self.assertEqual(len(messages), 3)
         self.assertEqual(
             messages[2],
-            "Задержан рейс ZF-443 Нижний Новгород-Анталья (GOJ-AYT), "
-            "заявленное время вылета - 9 сентября 20:50, "
-            "новое время вылета - 9 сентября 23:00, "
-            "время обнаружения задержки - 9 сентября 21:57."
-            " Ранее объявленные времена вылета: 9 сентября 22:05, 9 сентября 22:40."
-            " Времена обнаружения задержек: 9 сентября 21:02, 9 сентября 21:27"
-            "\nОбщая задержка: 2 ч 10 мин.")
+            "⚠️ <b>Задержан рейс ZF-443</b> · задержка №3\n"
+            "Нижний Новгород → Анталья · <code>GOJ-AYT</code>\n"
+            "\n"
+            "По расписанию: <b>9 сентября 20:50</b>\n"
+            "Новое время: <b>23:00</b>\n"
+            "Задержка: <b>2 ч 10 мин</b>\n"
+            "\n"
+            "Объявляли ранее:\n"
+            "• 22:05 — обнаружено 21:02\n"
+            "• 22:40 — обнаружено 21:27\n"
+            "\n"
+            "<i>Обнаружено 21:57</i>")
 
         # 22:33 — четвёртая задержка.
         self.poll_at(SEPT(9, 22, 33), [make_row(self.SCHEDULED, SEPT(9, 23, 30))])
@@ -128,14 +136,18 @@ class TestDelayScenario(MonitorTestCase):
         self.assertEqual(len(messages), 5)
         self.assertEqual(
             messages[4],
-            "Вылетел рейс ZF-443 Нижний Новгород-Анталья (GOJ-AYT) "
-            "10 сентября в 00:10. История времени рейса:\n"
-            "Изначальное время: 9 сентября 20:50\n"
-            "Задержка - 9 сентября 22:05, время обнаружения - 9 сентября 21:02\n"
-            "Задержка - 9 сентября 22:40, время обнаружения - 9 сентября 21:27\n"
-            "Задержка - 9 сентября 23:00, время обнаружения - 9 сентября 21:57\n"
-            "Задержка - 9 сентября 23:30, время обнаружения - 9 сентября 22:33\n"
-            "Итоговая задержка: 3 ч 20 мин.")
+            "\U0001f6eb <b>Вылетел рейс ZF-443</b>\n"
+            "Нижний Новгород → Анталья · <code>GOJ-AYT</code>\n"
+            "\n"
+            "Фактический вылет: <b>10 сентября 00:10</b>\n"
+            "Итоговая задержка: <b>3 ч 20 мин</b>\n"
+            "\n"
+            "История:\n"
+            "• по расписанию — 20:50\n"
+            "• 22:05 — обнаружено 21:02\n"
+            "• 22:40 — обнаружено 21:27\n"
+            "• 23:00 — обнаружено 21:57\n"
+            "• 23:30 — обнаружено 22:33")
 
         # Повторный опрос после вылета ничего не добавляет.
         self.poll_at(SEPT(10, 0, 30),
@@ -180,7 +192,7 @@ class TestNotificationRules(MonitorTestCase):
         messages = self.messages()
         self.assertEqual(len(messages), 1)
         self.assertIn("Вылетел рейс", messages[0])
-        self.assertIn("Итоговая задержка: 30 мин.", messages[0])
+        self.assertIn("Итоговая задержка: <b>30 мин</b>", messages[0])
 
     def test_threshold_filters_small_delays(self):
         self.db.set_setting("min_delay_minutes", 15)
@@ -195,8 +207,11 @@ class TestNotificationRules(MonitorTestCase):
         self.poll_at(SEPT(8, 12, 0), [make_row(SEPT(9, 20, 50), SEPT(9, 23, 0))])
         messages = self.messages()
         self.assertEqual(len(messages), 1)
-        self.assertIn("новое время вылета - 9 сентября 23:00", messages[0])
-        self.assertNotIn("Ранее объявленные", messages[0])
+        self.assertIn("Новое время: <b>23:00</b>", messages[0])
+        self.assertNotIn("Объявляли ранее", messages[0])
+        self.assertNotIn("задержка №", messages[0])
+        # Обнаружено накануне — значит у времени обнаружения нужна дата.
+        self.assertIn("<i>Обнаружено 8 сентября 12:00</i>", messages[0])
 
     def test_cancelled_flight(self):
         self.poll_at(SEPT(9, 19, 0), [make_row(SEPT(9, 20, 50), SEPT(9, 20, 50))])
@@ -204,7 +219,7 @@ class TestNotificationRules(MonitorTestCase):
                      [make_row(SEPT(9, 20, 50), SEPT(9, 20, 50), status="Отменен")])
         messages = self.messages()
         self.assertEqual(len(messages), 1)
-        self.assertTrue(messages[0].startswith("Отменён рейс"))
+        self.assertIn("<b>Отменён рейс ZF-443</b>", messages[0])
 
     def test_codeshare_notified_once(self):
         """Два номера одного самолёта дают одно сообщение."""
