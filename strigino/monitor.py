@@ -8,6 +8,7 @@
 """
 
 import logging
+from datetime import timedelta
 
 from . import notify
 from .board import BoardError, fetch_departures
@@ -18,6 +19,17 @@ log = logging.getLogger("strigino.monitor")
 SEEDED_KEY = "seeded"
 LAST_POLL_KEY = "last_poll_utc"
 LAST_CLEANUP_KEY = "last_cleanup_utc"
+
+# Табло изредка публикует внутренне противоречивую строку: статус «Вылетел»
+# вместе со временем, которое ещё не наступило. Так было 9 сентября 2026 года
+# с рейсом FV-6230 — на один опрос показалось 14:52 вместо 11:52, и ушло
+# сообщение о вылете с временем на три часа вперёд; следующим опросом сайт
+# исправился сам. Верить такой строке нельзя ни как вылету, ни как задержке,
+# поэтому она пропускается целиком до следующего опроса.
+#
+# Допуск закрывает расхождение часов аэропорта и сервера: без него вылет,
+# отмеченный ровно в момент опроса, лишний раз откладывался бы на цикл.
+DEPARTURE_TOLERANCE = timedelta(minutes=5)
 
 
 class Monitor:
@@ -67,7 +79,7 @@ class Monitor:
             log.info("первый запуск: заполняю базу без оповещений (%d рейсов)", len(rows))
 
         result = {"rows": len(rows), "delays": 0, "departures": 0,
-                  "cancelled": 0, "new": 0, "seeding": seeding}
+                  "cancelled": 0, "new": 0, "suspect": 0, "seeding": seeding}
 
         for row in rows:
             try:
@@ -84,6 +96,17 @@ class Monitor:
     def _process(self, row, seeding, result):
         previous = self.db.get_flight(row.leg_key)
         detected = now_utc()
+
+        if row.is_departed and row.expected > detected + DEPARTURE_TOLERANCE:
+            # Рейс не мог вылететь в будущем — см. DEPARTURE_TOLERANCE.
+            # Состояние в базе не трогаем: последнее известное достовернее.
+            result["suspect"] += 1
+            log.warning(
+                "рейс %s (%s) помечен вылетевшим, но время вылета %s ещё не "
+                "наступило — строка пропущена до следующего опроса",
+                row.flight_no, row.leg_key,
+                row.expected.strftime("%d.%m %H:%M"))
+            return
 
         if previous is None:
             result["new"] += 1

@@ -12,7 +12,7 @@ from strigino import config as config_module, monitor as monitor_module
 from strigino.board import BoardRow
 from strigino.db import Database
 from strigino.monitor import Monitor
-from strigino.timeutil import MSK
+from strigino.timeutil import MSK, iso
 
 SEPT = lambda day, hour, minute: datetime(2026, 9, day, hour, minute, tzinfo=MSK)
 
@@ -253,6 +253,98 @@ class TestNotificationRules(MonitorTestCase):
         result = self.monitor.poll()
         self.assertIn("error", result)
         self.assertIsNotNone(self.db.get_flight("dep-6060990-AYT"))
+
+
+class TestInconsistentBoard(MonitorTestCase):
+    """Табло изредка отдаёт «Вылетел» со временем, которое ещё не наступило.
+
+    Реальный случай 9 сентября 2026 года: рейс FV-6230 (план 11:50) на один
+    опрос показался вылетевшим в 14:52, и ушло сообщение о вылете с временем
+    на три часа вперёд. Следующим опросом сайт исправился на 11:52 —
+    опоздание на 2 минуты, по которому сообщения быть не должно вовсе.
+    """
+
+    SCHEDULED = SEPT(9, 11, 50)
+
+    def setUp(self):
+        super().setUp()
+        self.db.add_chat("100500", "тест")
+        self.poll_at(SEPT(9, 6, 0), [])  # снять флаг первого запуска
+
+    def flight(self, expected, status=""):
+        return make_row(self.SCHEDULED, expected, status=status,
+                        flight_no="FV-6230", uid="6061960",
+                        dest_name="Москва", dest_iata="SVO")
+
+    def test_departure_in_the_future_is_ignored(self):
+        self.poll_at(SEPT(9, 11, 0), [self.flight(self.SCHEDULED)])
+
+        result = self.poll_at(SEPT(9, 12, 3),
+                              [self.flight(SEPT(9, 14, 52), status="Вылетел")])
+
+        self.assertEqual(result["suspect"], 1)
+        self.assertEqual(self.messages(), [])
+
+        # Состояние в базе не испорчено: последнее достоверное сохранено.
+        flight = self.db.get_flight("dep-6061960-SVO")
+        self.assertEqual(flight["expected_utc"], iso(self.SCHEDULED))
+        self.assertEqual(flight["departed"], 0)
+
+    def test_recovers_when_board_corrects_itself(self):
+        """После исправления сайта рейс отрабатывается как обычно."""
+        self.poll_at(SEPT(9, 11, 0), [self.flight(self.SCHEDULED)])
+        self.poll_at(SEPT(9, 12, 3),
+                     [self.flight(SEPT(9, 14, 52), status="Вылетел")])
+        self.poll_at(SEPT(9, 12, 8),
+                     [self.flight(SEPT(9, 11, 52), status="Вылетел")])
+
+        # Опоздание на 2 минуты — ниже departed_min_delay_minutes,
+        # объявленных задержек не было, значит сообщений быть не должно.
+        self.assertEqual(self.messages(), [])
+        flight = self.db.get_flight("dep-6061960-SVO")
+        self.assertEqual(flight["departed"], 1)
+        self.assertEqual(flight["expected_utc"], iso(SEPT(9, 11, 52)))
+
+    def test_suspect_row_does_not_become_a_delay(self):
+        """Пропущенная строка не должна превратиться в оповещение о задержке.
+
+        Отклонение 14:52 против плановых 11:50 — это три часа: если бы строка
+        просто считалась невылетевшей, ушло бы ложное «Задержан рейс».
+        """
+        self.poll_at(SEPT(9, 11, 0), [self.flight(self.SCHEDULED)])
+        self.poll_at(SEPT(9, 12, 3),
+                     [self.flight(SEPT(9, 14, 52), status="Вылетел")])
+
+        self.assertEqual(self.messages(), [])
+        self.assertEqual(self.db.delays_for("dep-6061960-SVO"), [])
+
+    def test_departure_at_poll_time_is_trusted(self):
+        """Вылет, отмеченный ровно в момент опроса, — нормальный случай."""
+        self.poll_at(SEPT(9, 11, 0), [self.flight(self.SCHEDULED)])
+        result = self.poll_at(SEPT(9, 12, 20),
+                              [self.flight(SEPT(9, 12, 20), status="Вылетел")])
+
+        self.assertEqual(result["suspect"], 0)
+        self.assertEqual(self.db.get_flight("dep-6061960-SVO")["departed"], 1)
+
+    def test_future_expected_without_departed_status_is_a_normal_delay(self):
+        """Время в будущем без статуса «Вылетел» — обычная задержка."""
+        self.poll_at(SEPT(9, 11, 0), [self.flight(self.SCHEDULED)])
+        result = self.poll_at(SEPT(9, 11, 30), [self.flight(SEPT(9, 14, 52))])
+
+        self.assertEqual(result["suspect"], 0)
+        self.assertEqual(len(self.messages()), 1)
+        self.assertIn("Задержан рейс FV-6230", self.messages()[0])
+
+    def test_first_sighting_of_a_suspect_row_is_ignored(self):
+        """Противоречивая строка не должна попасть в базу и как новый рейс."""
+        result = self.poll_at(SEPT(9, 12, 3),
+                              [self.flight(SEPT(9, 14, 52), status="Вылетел")])
+
+        self.assertEqual(result["suspect"], 1)
+        self.assertEqual(result["new"], 0)
+        self.assertIsNone(self.db.get_flight("dep-6061960-SVO"))
+        self.assertEqual(self.messages(), [])
 
 
 class TestCleanup(MonitorTestCase):
